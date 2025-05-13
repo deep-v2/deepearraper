@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>DeepEarraper</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background-color: #111;
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+    }
+
+    h1 {
+      color: #ff0055;
+      margin-bottom: 30px;
+    }
+
+    input[type="file"] {
+      margin: 20px 0;
+    }
+
+    button {
+      background-color: #ff0055;
+      color: white;
+      border: none;
+      padding: 15px 30px;
+      font-size: 18px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      background-color: #888;
+      cursor: not-allowed;
+    }
+
+    #status {
+      margin-top: 20px;
+      color: #0f0;
+    }
+  </style>
+</head>
+<body>
+  <h1>DeepEarraper</h1>
+  <input type="file" accept="audio/*" id="audioInput">
+  <button id="processBtn" disabled>Continuar</button>
+  <div id="status"></div>
+
+  <script>
+    let audioBuffer;
+    let fileName;
+
+    const input = document.getElementById('audioInput');
+    const button = document.getElementById('processBtn');
+    const status = document.getElementById('status');
+
+    input.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      fileName = file.name.replace(/\.[^/.]+$/, ""); // sin extensión
+      const arrayBuffer = await file.arrayBuffer();
+      const audioContext = new AudioContext();
+      audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+      button.disabled = false;
+      status.textContent = "Audio cargado correctamente.";
+    });
+
+    button.addEventListener('click', async () => {
+      if (!audioBuffer) return;
+      status.textContent = "Procesando...";
+
+      // Offline context para procesar audio
+      const offlineCtx = new OfflineAudioContext(
+        audioBuffer.numberOfChannels,
+        audioBuffer.length,
+        audioBuffer.sampleRate
+      );
+
+      const source = offlineCtx.createBufferSource();
+      source.buffer = audioBuffer;
+
+      const gainNode = offlineCtx.createGain();
+      gainNode.gain.value = 316; // +50dB equivalente (10^(50/20))
+
+      source.connect(gainNode).connect(offlineCtx.destination);
+      source.start();
+
+      const processedBuffer = await offlineCtx.startRendering();
+
+      // Convertir a WAV
+      const wavBlob = bufferToWav(processedBuffer);
+      const url = URL.createObjectURL(wavBlob);
+
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName + '_EARRAPED.wav';
+      link.click();
+
+      status.textContent = "¡Procesado y listo para descargar!";
+    });
+
+    function bufferToWav(buffer) {
+      const numOfChan = buffer.numberOfChannels,
+            length = buffer.length * numOfChan * 2 + 44,
+            bufferArray = new ArrayBuffer(length),
+            view = new DataView(bufferArray),
+            channels = [],
+            sampleRate = buffer.sampleRate,
+            offset = 0,
+            pos = 0;
+
+      // WAV header
+      setUint32(0x46464952); // "RIFF"
+      setUint32(length - 8);
+      setUint32(0x45564157); // "WAVE"
+
+      setUint32(0x20746d66); // "fmt " chunk
+      setUint32(16);
+      setUint16(1);
+      setUint16(numOfChan);
+      setUint32(sampleRate);
+      setUint32(sampleRate * 2 * numOfChan);
+      setUint16(numOfChan * 2);
+      setUint16(16);
+
+      setUint32(0x61746164); // "data" chunk
+      setUint32(length - pos - 4);
+
+      for (let i = 0; i < numOfChan; i++)
+        channels.push(buffer.getChannelData(i));
+
+      while (pos < length) {
+        for (let i = 0; i < numOfChan; i++) {
+          const sample = Math.max(-1, Math.min(1, channels[i][offset]));
+          const int16 = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+          view.setInt16(pos, int16, true);
+          pos += 2;
+        }
+        offset++;
+      }
+
+      return new Blob([bufferArray], { type: "audio/wav" });
+
+      function setUint16(data) {
+        view.setUint16(pos, data, true);
+        pos += 2;
+      }
+
+      function setUint32(data) {
+        view.setUint32(pos, data, true);
+        pos += 4;
+      }
+    }
+  </script>
+</body>
+</html>

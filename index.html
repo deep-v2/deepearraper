@@ -53,30 +53,39 @@
   <div id="status"></div>
 
   <script>
-    let audioBuffer;
-    let fileName;
+  let audioBuffer;
+  let fileName;
 
-    const input = document.getElementById('audioInput');
-    const button = document.getElementById('processBtn');
-    const status = document.getElementById('status');
+  const input = document.getElementById('audioInput');
+  const button = document.getElementById('processBtn');
+  const status = document.getElementById('status');
 
-    input.addEventListener('change', async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
+  input.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
 
-      fileName = file.name.replace(/\.[^/.]+$/, ""); // sin extensión
+    fileName = file.name.replace(/\.[^/.]+$/, ""); // sin extensión
+    status.textContent = "Cargando audio...";
+
+    try {
       const arrayBuffer = await file.arrayBuffer();
       const audioContext = new AudioContext();
       audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
       button.disabled = false;
-      status.textContent = "Audio cargado correctamente.";
-    });
+      status.textContent = "Imported succesfully!";
+    } catch (err) {
+      status.textContent = "Error loading audio..";
+      console.error(err);
+    }
+  });
 
-    button.addEventListener('click', async () => {
-      if (!audioBuffer) return;
-      status.textContent = "Procesando...";
+  button.addEventListener('click', async () => {
+    if (!audioBuffer) return;
 
-      // Offline context para procesar audio
+    status.textContent = "Processing...";
+    button.disabled = true;
+
+    try {
       const offlineCtx = new OfflineAudioContext(
         audioBuffer.numberOfChannels,
         audioBuffer.length,
@@ -87,77 +96,83 @@
       source.buffer = audioBuffer;
 
       const gainNode = offlineCtx.createGain();
-      gainNode.gain.value = 316; // +50dB equivalente (10^(50/20))
+      gainNode.gain.value = 32; // +30dB razonable
 
       source.connect(gainNode).connect(offlineCtx.destination);
       source.start();
 
+      // Procesar audio
       const processedBuffer = await offlineCtx.startRendering();
 
-      // Convertir a WAV
+      // Convertir a WAV y descargar
       const wavBlob = bufferToWav(processedBuffer);
       const url = URL.createObjectURL(wavBlob);
 
       const link = document.createElement('a');
       link.href = url;
-      link.download = fileName + '_EARRAPED.wav';
+      link.download = fileName + '_deepEARRAPER.wav';
       link.click();
 
-      status.textContent = "¡Procesado y listo para descargar!";
-    });
+      status.textContent = "Done!";
+    } catch (err) {
+      console.error(err);
+      status.textContent = "Error during process, try again";
+    } finally {
+      button.disabled = false;
+    }
+  });
 
-    function bufferToWav(buffer) {
-      const numOfChan = buffer.numberOfChannels,
-            length = buffer.length * numOfChan * 2 + 44,
-            bufferArray = new ArrayBuffer(length),
-            view = new DataView(bufferArray),
-            channels = [],
-            sampleRate = buffer.sampleRate,
-            offset = 0,
-            pos = 0;
+  function bufferToWav(buffer) {
+    const numOfChan = buffer.numberOfChannels,
+          length = buffer.length * numOfChan * 2 + 44,
+          bufferArray = new ArrayBuffer(length),
+          view = new DataView(bufferArray),
+          channels = [],
+          sampleRate = buffer.sampleRate,
+          offset = 0,
+          pos = 0;
 
-      // WAV header
-      setUint32(0x46464952); // "RIFF"
-      setUint32(length - 8);
-      setUint32(0x45564157); // "WAVE"
+    setUint32(0x46464952); // "RIFF"
+    setUint32(length - 8);
+    setUint32(0x45564157); // "WAVE"
 
-      setUint32(0x20746d66); // "fmt " chunk
-      setUint32(16);
-      setUint16(1);
-      setUint16(numOfChan);
-      setUint32(sampleRate);
-      setUint32(sampleRate * 2 * numOfChan);
-      setUint16(numOfChan * 2);
-      setUint16(16);
+    setUint32(0x20746d66); // "fmt " chunk
+    setUint32(16);
+    setUint16(1);
+    setUint16(numOfChan);
+    setUint32(sampleRate);
+    setUint32(sampleRate * numOfChan * 2);
+    setUint16(numOfChan * 2);
+    setUint16(16);
 
-      setUint32(0x61746164); // "data" chunk
-      setUint32(length - pos - 4);
+    setUint32(0x61746164); // "data" chunk
+    setUint32(length - pos - 4);
 
-      for (let i = 0; i < numOfChan; i++)
-        channels.push(buffer.getChannelData(i));
+    for (let i = 0; i < numOfChan; i++)
+      channels.push(buffer.getChannelData(i));
 
-      while (pos < length) {
-        for (let i = 0; i < numOfChan; i++) {
-          const sample = Math.max(-1, Math.min(1, channels[i][offset]));
-          const int16 = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
-          view.setInt16(pos, int16, true);
-          pos += 2;
-        }
-        offset++;
-      }
-
-      return new Blob([bufferArray], { type: "audio/wav" });
-
-      function setUint16(data) {
-        view.setUint16(pos, data, true);
+    while (pos < length) {
+      for (let i = 0; i < numOfChan; i++) {
+        const sample = Math.max(-1, Math.min(1, channels[i][offset]));
+        const int16 = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+        view.setInt16(pos, int16, true);
         pos += 2;
       }
-
-      function setUint32(data) {
-        view.setUint32(pos, data, true);
-        pos += 4;
-      }
+      offset++;
     }
-  </script>
+
+    return new Blob([bufferArray], { type: "audio/wav" });
+
+    function setUint16(data) {
+      view.setUint16(pos, data, true);
+      pos += 2;
+    }
+
+    function setUint32(data) {
+      view.setUint32(pos, data, true);
+      pos += 4;
+    }
+  }
+</script>
 </body>
 </html>
